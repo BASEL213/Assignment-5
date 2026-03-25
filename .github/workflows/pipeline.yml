@@ -8,9 +8,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ─────────────────────────────────────────────
-  # JOB 1: VALIDATE
-  # ─────────────────────────────────────────────
   validate:
     name: Train & Validate Model
     runs-on: ubuntu-latest
@@ -34,7 +31,6 @@ jobs:
           dvc pull --no-run-cache 2>/dev/null || echo "DVC pull skipped"
 
       - name: Train model and log to MLflow
-        # No MLFLOW_TRACKING_URI → train.py uses sqlite:///mlflow.db locally
         run: python train.py
 
       - name: Upload model_info + MLflow DB
@@ -45,10 +41,7 @@ jobs:
             model_info.txt
             mlflow.db
           retention-days: 1
-
-  # ─────────────────────────────────────────────
-  # JOB 2: DEPLOY
-  # ─────────────────────────────────────────────
+          
   deploy:
     name: Check Threshold & Deploy
     runs-on: ubuntu-latest
@@ -74,13 +67,8 @@ jobs:
           name: model-info
 
       - name: Check Threshold
-        # No MLFLOW_TRACKING_URI → check_threshold.py uses the downloaded mlflow.db
         run: python check_threshold.py
 
       - name: Mock Docker Build
         run: |
-          RUN_ID=$(cat model_info.txt)
-          echo "✅ Accuracy threshold passed!"
-          echo "Building Docker image for Run ID: ${RUN_ID}"
-          docker build --build-arg RUN_ID="${RUN_ID}" -t model-serving:${RUN_ID} .
-          echo "🐳 Docker image model-serving:${RUN_ID} built successfully."
+          echo "Building Docker image for Run ID: $(cat model_info.txt)"

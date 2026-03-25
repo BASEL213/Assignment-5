@@ -30,24 +30,20 @@ jobs:
           pip install mlflow scikit-learn pandas numpy dvc
 
       - name: Pull data with DVC
-        env:
-          # Add your DVC remote credentials as secrets if needed
-          # e.g. AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
         run: |
-          # If no DVC remote is configured, this gracefully skips
-          dvc pull --no-run-cache 2>/dev/null || echo "DVC pull skipped (no remote or no tracked files)"
+          dvc pull --no-run-cache 2>/dev/null || echo "DVC pull skipped"
 
       - name: Train model and log to MLflow
-        env:
-          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        # No MLFLOW_TRACKING_URI → train.py uses sqlite:///mlflow.db locally
         run: python train.py
 
-      - name: Upload model_info artifact
+      - name: Upload model_info + MLflow DB
         uses: actions/upload-artifact@v4
         with:
           name: model-info
-          path: model_info.txt
+          path: |
+            model_info.txt
+            mlflow.db
           retention-days: 1
 
   # ─────────────────────────────────────────────
@@ -78,14 +74,13 @@ jobs:
           name: model-info
 
       - name: Check Threshold
-        env:
-          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        # No MLFLOW_TRACKING_URI → check_threshold.py uses the downloaded mlflow.db
         run: python check_threshold.py
 
       - name: Mock Docker Build
         run: |
           RUN_ID=$(cat model_info.txt)
-          echo "Accuracy threshold passed!"
+          echo "✅ Accuracy threshold passed!"
           echo "Building Docker image for Run ID: ${RUN_ID}"
           docker build --build-arg RUN_ID="${RUN_ID}" -t model-serving:${RUN_ID} .
           echo "🐳 Docker image model-serving:${RUN_ID} built successfully."

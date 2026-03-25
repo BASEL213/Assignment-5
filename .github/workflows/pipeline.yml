@@ -1,13 +1,20 @@
-name: Model Validation and Deployment
+name: Model Validation and Deployment Pipeline
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
+  # ─────────────────────────────────────────────
+  # JOB 1: VALIDATE
+  # ─────────────────────────────────────────────
   validate:
+    name: Train & Validate Model
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -15,33 +22,42 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install dvc[s3] mlflow scikit-learn
+          pip install --upgrade pip
+          pip install mlflow scikit-learn pandas numpy dvc
 
-      - name: Pull Data
-        run: |
-          dvc pull || echo "DVC Pull successful"
-
-      - name: Train Model
+      - name: Pull data with DVC
         env:
+          # Add your DVC remote credentials as secrets if needed
+          # e.g. AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
         run: |
-          python train.py
+          # If no DVC remote is configured, this gracefully skips
+          dvc pull --no-run-cache 2>/dev/null || echo "DVC pull skipped (no remote or no tracked files)"
 
-      - name: Export Run ID
-        if: success()
+      - name: Train model and log to MLflow
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        run: python train.py
+
+      - name: Upload model_info artifact
         uses: actions/upload-artifact@v4
         with:
           name: model-info
           path: model_info.txt
+          retention-days: 1
 
+  # ─────────────────────────────────────────────
+  # JOB 2: DEPLOY
+  # ─────────────────────────────────────────────
   deploy:
+    name: Check Threshold & Deploy
     runs-on: ubuntu-latest
-    needs: validate
+    needs: validate          # only runs if validate succeeds
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,14 +65,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install mlflow
+          pip install --upgrade pip
+          pip install mlflow scikit-learn pandas numpy
 
-      - name: Download model_info.txt
+      - name: Download model_info artifact
         uses: actions/download-artifact@v4
         with:
           name: model-info
@@ -64,12 +80,12 @@ jobs:
       - name: Check Threshold
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
-        run: |
-          python check_threshold.py
+        run: python check_threshold.py
 
       - name: Mock Docker Build
-        if: success()
         run: |
           RUN_ID=$(cat model_info.txt)
-          echo "Building Docker image for Run ID: $RUN_ID"
-          docker build --build-arg RUN_ID=$RUN_ID -t deployed-model .
+          echo "Accuracy threshold passed!"
+          echo "Building Docker image for Run ID: ${RUN_ID}"
+          docker build --build-arg RUN_ID="${RUN_ID}" -t model-serving:${RUN_ID} .
+          echo "🐳 Docker image model-serving:${RUN_ID} built successfully."
